@@ -19,3 +19,6 @@ Thumbs.db
 
 # dotenv
 .env
+
+# Ignore generated movie websites
+generated_site/

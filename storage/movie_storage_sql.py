@@ -22,7 +22,7 @@ def create_tables() -> None:
             )
         """))
 
-        # Movies table with user_id foreign key
+        # Movies table with user_id foreign key, note, and imdb_id
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS movies (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -30,6 +30,8 @@ def create_tables() -> None:
                 year INTEGER NOT NULL,
                 rating REAL NOT NULL,
                 poster_url TEXT NOT NULL,
+                note TEXT DEFAULT '',
+                imdb_id TEXT NOT NULL,
                 user_id INTEGER NOT NULL,
                 FOREIGN KEY(user_id) REFERENCES users(id)
             )
@@ -144,10 +146,19 @@ def add_movie_from_omdb(title: str, user_id: int) -> bool:
         with engine.begin() as conn:
             conn.execute(
                 text("""
-                    INSERT OR IGNORE INTO movies (title, year, rating, poster_url, user_id)
-                    VALUES (:title, :year, :rating, :poster_url, :user_id)
+                    INSERT OR IGNORE INTO movies 
+                    (title, year, rating, poster_url, note, imdb_id, user_id)
+                    VALUES (:title, :year, :rating, :poster_url, :note, :imdb_id, :user_id)
                 """),
-                {"title": title, "year": year, "rating": rating, "poster_url": poster_url, "user_id": user_id}
+                {
+                    "title": title,
+                    "year": year,
+                    "rating": rating,
+                    "poster_url": poster_url,
+                    "note": "",
+                    "imdb_id": imdb_id,
+                    "user_id": user_id
+                }
             )
 
         print(f"✅ Added '{title}' ({year}) with rating {rating}/10 for user ID {user_id}.")
@@ -166,36 +177,40 @@ def list_movies(user_id: int) -> dict[str, dict[str, int | float | str]]:
     try:
         with engine.connect() as conn:
             result = conn.execute(
-                text("SELECT title, year, rating, poster_url FROM movies WHERE user_id = :user_id"),
+                text("SELECT title, year, rating, poster_url, note, imdb_id FROM movies WHERE user_id = :user_id"),
                 {"user_id": user_id}
             )
             movies = result.fetchall()
         return {
-            row.title: {"year": row.year, "rating": row.rating, "poster_url": row.poster_url}
+            row.title: {
+                "year": row.year,
+                "rating": row.rating,
+                "poster_url": row.poster_url,
+                "note": row.note,
+                "imdb_id": row.imdb_id,
+            }
             for row in movies
         }
     except SQLAlchemyError as e:
         print(f"Database error while listing movies: {e}")
         return {}
 
-
-def get_movie(title: str, user_id: int) -> dict[str, int | float] | None:
-    """Retrieve a single movie by title for a given user."""
+def get_movie(title: str, user_id: int) -> dict[str, int | float | str] | None:
+    """Retrieve a single movie by title for a given user, including note."""
     try:
         with engine.connect() as conn:
             result = conn.execute(
-                text("SELECT title, year, rating FROM movies WHERE title = :title AND user_id = :user_id"),
+                text("SELECT title, year, rating, note FROM movies WHERE title = :title AND user_id = :user_id"),
                 {"title": title, "user_id": user_id}
             ).fetchone()
             if result:
-                return {"title": result.title, "year": result.year, "rating": result.rating}
+                return {"title": result.title, "year": result.year, "rating": result.rating, "note": result.note}
             else:
                 print(f"No movie found with title '{title}' for this user.")
                 return None
     except SQLAlchemyError as e:
         print(f"Database error while retrieving movie '{title}': {e}")
         return None
-
 
 def add_movie(title: str, year: int, rating: float, user_id: int) -> bool:
     """Add a new movie for a given user."""
@@ -215,24 +230,41 @@ def add_movie(title: str, year: int, rating: float, user_id: int) -> bool:
         return False
 
 
-def update_movie(title: str, rating: float, user_id: int) -> bool:
-    """Update the rating of a movie for a given user."""
+def update_movie(title: str, rating: float | None, note: str | None, user_id: int) -> bool:
+    """Update the rating and/or note of a movie for a given user."""
     try:
+        set_clauses = []
+        params = {"title": title, "user_id": user_id}
+
+        if rating is not None:
+            set_clauses.append("rating = :rating")
+            params["rating"] = rating
+        if note is not None:
+            set_clauses.append("note = :note")
+            params["note"] = note
+
+        if not set_clauses:
+            print("Nothing to update.")
+            return False
+
+        set_clause = ", ".join(set_clauses)
+
         with engine.begin() as conn:
             result = conn.execute(
-                text("UPDATE movies SET rating = :rating WHERE title = :title AND user_id = :user_id"),
-                {"title": title, "rating": rating, "user_id": user_id}
+                text(f"UPDATE movies SET {set_clause} WHERE title = :title AND user_id = :user_id"),
+                params
             )
-            if result.rowcount:
-                print(f"Movie '{title}' updated successfully to rating {rating} for user ID {user_id}.")
-                return True
-            else:
-                print(f"No movie found with title '{title}' for this user.")
-                return False
+
+        if result.rowcount:
+            print(f"Movie '{title}' updated successfully for user ID {user_id}.")
+            return True
+        else:
+            print(f"No movie found with title '{title}' for this user.")
+            return False
+
     except SQLAlchemyError as e:
         print(f"Database error while updating movie '{title}': {e}")
         return False
-
 
 def delete_movie(title: str, user_id: int) -> bool:
     """Delete a movie by title for a given user."""
