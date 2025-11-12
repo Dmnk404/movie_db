@@ -10,21 +10,89 @@ engine = create_engine(DB_URL, echo=True)
 load_dotenv()
 OMDB_API_KEY = os.getenv("OMDB_API_KEY")
 
-def create_table() -> None:
-    """Create the movies table if it does not exist."""
+
+def create_tables() -> None:
+    """Create all necessary tables if they do not exist."""
     with engine.begin() as conn:
+        # Users table
         conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS movies (
+            CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                title TEXT UNIQUE NOT NULL,
-                year INTEGER NOT NULL,
-                rating REAL NOT NULL,
-                poster_url TEXT NOT NULL
+                username TEXT UNIQUE NOT NULL
             )
         """))
 
-def add_movie_from_omdb(title: str) -> bool:
-    """Search for a movie via OMDb and add it to the database."""
+        # Movies table with user_id foreign key
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS movies (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                year INTEGER NOT NULL,
+                rating REAL NOT NULL,
+                poster_url TEXT NOT NULL,
+                user_id INTEGER NOT NULL,
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            )
+        """))
+
+
+def create_user(username: str) -> bool:
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("INSERT INTO users (username) VALUES (:username)"), {"username": username})
+        return True
+    except SQLAlchemyError as e:
+        print(f"Error creating user: {e}")
+        return False
+
+def select_user() -> dict:
+    """
+    Prompt the user to select an existing user or create a new one.
+    Returns the selected user's dictionary with 'id' and 'username'.
+    """
+    while True:
+        users = list_users()
+        print("Select a user:")
+        for i, u in enumerate(users, start=1):
+            print(f"{i}. {u['username']}")
+        print(f"{len(users) + 1}. Create new user")
+
+        choice = input("Enter choice: ").strip()
+        try:
+            choice = int(choice)
+            if 1 <= choice <= len(users):
+                user = users[choice - 1]
+                print(f"Welcome back, {user['username']}! 🎬")
+                return user
+            elif choice == len(users) + 1:
+                username = input("Enter new username: ").strip()
+                if not username:
+                    print("Username cannot be empty.")
+                    continue
+                if create_user(username):
+                    # Reload user to get correct ID
+                    user = next(u for u in list_users() if u['username'] == username)
+                    print(f"User '{username}' created and selected.")
+                    return user
+                else:
+                    print("Failed to create user. Try again.")
+            else:
+                print("Invalid choice. Try again.")
+        except ValueError:
+            print("Invalid input. Enter a number.")
+
+def list_users() -> list[dict]:
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text("SELECT id, username FROM users"))
+            return result.mappings().all()
+    except SQLAlchemyError as e:
+        print(f"Error listing users: {e}")
+        return []
+
+
+def add_movie_from_omdb(title: str, user_id: int) -> bool:
+    """Search for a movie via OMDb and add it for the given user."""
     if not OMDB_API_KEY:
         print("OMDb API key not found in environment.")
         return False
@@ -72,17 +140,17 @@ def add_movie_from_omdb(title: str) -> bool:
         rating = float(detail_response["imdbRating"]) if detail_response.get("imdbRating") not in [None, "N/A"] else 0.0
         poster_url = detail_response.get("Poster", "N/A")
 
-        # Step 4: Save to DB
+        # Step 4: Save to DB with user_id
         with engine.begin() as conn:
             conn.execute(
                 text("""
-                    INSERT OR IGNORE INTO movies (title, year, rating, poster_url)
-                    VALUES (:title, :year, :rating, :poster_url)
+                    INSERT OR IGNORE INTO movies (title, year, rating, poster_url, user_id)
+                    VALUES (:title, :year, :rating, :poster_url, :user_id)
                 """),
-                {"title": title, "year": year, "rating": rating, "poster_url": poster_url}
+                {"title": title, "year": year, "rating": rating, "poster_url": poster_url, "user_id": user_id}
             )
 
-        print(f"✅ Added '{title}' ({year}) with rating {rating}/10.")
+        print(f"✅ Added '{title}' ({year}) with rating {rating}/10 for user ID {user_id}.")
         return True
 
     except requests.RequestException as e:
@@ -93,11 +161,14 @@ def add_movie_from_omdb(title: str) -> bool:
         return False
 
 
-def list_movies() -> dict[str, dict[str, int | float | str]]:
-    """Retrieve all movies from the database."""
+def list_movies(user_id: int) -> dict[str, dict[str, int | float | str]]:
+    """Retrieve all movies for a given user."""
     try:
         with engine.connect() as conn:
-            result = conn.execute(text("SELECT title, year, rating, poster_url FROM movies"))
+            result = conn.execute(
+                text("SELECT title, year, rating, poster_url FROM movies WHERE user_id = :user_id"),
+                {"user_id": user_id}
+            )
             movies = result.fetchall()
         return {
             row.title: {"year": row.year, "rating": row.rating, "poster_url": row.poster_url}
@@ -108,71 +179,74 @@ def list_movies() -> dict[str, dict[str, int | float | str]]:
         return {}
 
 
-def get_movie(title: str) -> dict[str, int | float] | None:
-    """Retrieve a single movie by title."""
+def get_movie(title: str, user_id: int) -> dict[str, int | float] | None:
+    """Retrieve a single movie by title for a given user."""
     try:
         with engine.connect() as conn:
             result = conn.execute(
-                text("SELECT title, year, rating FROM movies WHERE title = :title"),
-                {"title": title}
+                text("SELECT title, year, rating FROM movies WHERE title = :title AND user_id = :user_id"),
+                {"title": title, "user_id": user_id}
             ).fetchone()
             if result:
                 return {"title": result.title, "year": result.year, "rating": result.rating}
             else:
-                print(f"No movie found with title '{title}'.")
+                print(f"No movie found with title '{title}' for this user.")
                 return None
     except SQLAlchemyError as e:
         print(f"Database error while retrieving movie '{title}': {e}")
         return None
 
-def add_movie(title: str, year: int, rating: float) -> bool:
-    """Add a new movie to the database."""
+
+def add_movie(title: str, year: int, rating: float, user_id: int) -> bool:
+    """Add a new movie for a given user."""
     try:
         with engine.begin() as conn:
             conn.execute(
                 text("""
-                    INSERT INTO movies (title, year, rating)
-                    VALUES (:title, :year, :rating)
+                    INSERT INTO movies (title, year, rating, poster_url, user_id)
+                    VALUES (:title, :year, :rating, 'N/A', :user_id)
                 """),
-                {"title": title, "year": year, "rating": rating}
+                {"title": title, "year": year, "rating": rating, "user_id": user_id}
             )
-            print(f"Movie '{title}' added successfully.")
+            print(f"Movie '{title}' added successfully for user ID {user_id}.")
             return True
     except SQLAlchemyError as e:
         print(f"Database error while adding movie '{title}': {e}")
         return False
 
-def update_movie(title: str, rating: float) -> bool:
-    """Update the rating of a movie in the database."""
+
+def update_movie(title: str, rating: float, user_id: int) -> bool:
+    """Update the rating of a movie for a given user."""
     try:
         with engine.begin() as conn:
             result = conn.execute(
-                text("UPDATE movies SET rating = :rating WHERE title = :title"),
-                {"title": title, "rating": rating}
+                text("UPDATE movies SET rating = :rating WHERE title = :title AND user_id = :user_id"),
+                {"title": title, "rating": rating, "user_id": user_id}
             )
             if result.rowcount:
-                print(f"Movie '{title}' updated successfully to rating {rating}.")
+                print(f"Movie '{title}' updated successfully to rating {rating} for user ID {user_id}.")
                 return True
             else:
-                print(f"No movie found with title '{title}'.")
+                print(f"No movie found with title '{title}' for this user.")
                 return False
     except SQLAlchemyError as e:
         print(f"Database error while updating movie '{title}': {e}")
         return False
 
-def delete_movie(title: str) -> bool:
-    """Delete a movie by title from the database."""
+
+def delete_movie(title: str, user_id: int) -> bool:
+    """Delete a movie by title for a given user."""
     try:
         with engine.begin() as conn:
             result = conn.execute(
-                text("DELETE FROM movies WHERE title = :title"),
-                {"title": title}
+                text("DELETE FROM movies WHERE title = :title AND user_id = :user_id"),
+                {"title": title, "user_id": user_id}
             )
             if result.rowcount:
-                print(f"Movie '{title}' deleted successfully.")
+                print(f"Movie '{title}' deleted successfully for user ID {user_id}.")
                 return True
             else:
-                print(f"No movie found with title '{title}'.")
+                print(f"No movie found with title '{title}' for this user.")
                 return False
     except SQLAlchemyError as e:
         print(f"Database error while deleting movie '{title}': {e}")
