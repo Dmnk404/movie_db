@@ -1,15 +1,15 @@
-import movie_storage_sql as storage
 import random
 import sys
-from statistics import median
+import movie_storage_sql as storage
 from collections import Counter
-import matplotlib.pyplot as plt
-
-
+from termcolor import colored as colored_text
+from matplotlib import pyplot as plt
+from movie_storage_sql import list_movies
+from sqlalchemy import text
 
 MAIN_MENU = ("Exit",
             "List movies",
-            "Add movie",
+            "Add movie from omdb",
             "Delete movie",
             "Update movie",
             "Stats",
@@ -18,12 +18,6 @@ MAIN_MENU = ("Exit",
             "Movies sorted by rating",
             "Create Rating Histogram",
              "Filter Movies")
-
-
-def colored_text(text, color_code):
-    """Uses ANSI escape codes to change color"""
-    return f"\033[{color_code}m{text}\033[0m"
-
 
 def print_menu(menu):
     """Prints the menu"""
@@ -38,8 +32,8 @@ def wait_for_input():
 
 
 def return_user_choice():
-    """Asks for and return user input"""
-    choice = input(colored_text("Enter choice (1-9): ", 33))
+    """Ask for and return user input"""
+    choice = input(colored_text("Enter choice (0–10): ", "yellow"))
     print()
     return choice
 
@@ -52,6 +46,23 @@ def close_programm():
     print("Bye!")
     sys.exit()
 
+def command_add_movie_omdb():
+    """Add a movie using the OMDb API."""
+    title = input(colored_text("Enter movie title: ", 33)).strip()
+    if not title:
+        print(colored_text("Title cannot be empty.", 31))
+        return
+
+    try:
+        from movie_storage_sql import add_movie_from_omdb
+        success = add_movie_from_omdb(title)
+        if success:
+            print(colored_text(f"Movie '{title}' added successfully from OMDb.", 32))
+        else:
+            print(colored_text(f"No movie found for '{title}'.", 33))
+    except Exception as e:
+        print(colored_text(f"Error adding movie: {e}", 31))
+
 
 def command_list_movies():
     """Retrieve and display all movies from the database."""
@@ -60,105 +71,93 @@ def command_list_movies():
     for movie, data in movies.items():
         print(f"{movie} ({data['year']}): {data['rating']}")
 
-def add_movie(movies):
-    """Adds movie to given dict"""
-    while True:
-        new_movie = input(colored_text("Enter new Movie Name: ", 33).strip())
-        if new_movie == "":
-            print("Please enter a movie name.")
-            continue
-        elif movie_exists(movies, new_movie):
-            print(colored_text(f"Movie {new_movie} already exist!", 31))
-            continue
-        break
-    while True:
-        try:
-            movies_year = int(input(colored_text("Enter Movie Year: ", 33)))
-            break
-        except ValueError:
-             print(colored_text("Please enter valid Movie Year!", 31))
-    while True:
-        try:
-            movie_rating = float(input(colored_text("Enter new movie rating (0-10): ", 33)))
-            if 0 <= movie_rating <= 10:
-                break
-            print(colored_text(f"Rating {movie_rating} is invalid", 31))
-        except ValueError:
-            print(colored_text("Please enter valid rating (0-10).", 31))
-    movies[new_movie] =\
-        {"Rating": movie_rating,
-        "Year": movies_year}
-    print(colored_text(f"Movie {new_movie} successfully added", 32))
-    return movies
-
-def del_movie(movies):
-    """Deletes movie from dict"""
-    while True:
-        movie_name = input(colored_text("Enter movie name to delete: ", 33))
-        if not movie_exists(movies, movie_name):
-            print(colored_text(f"Movie {movie_name} doesn't exist!", 31))
-            continue
-        else:
-            movies.pop(movie_name)
-            print(colored_text(f"Movie {movie_name} successfully deleted", 32))
-        return movies
-
-
-def update_movie(movies):
-    """Updates movie from dict"""
-    while True:
-        movie_name = input(colored_text("Enter movie name: ", 33))
-        if not movie_exists(movies, movie_name):
-            print(colored_text(f"Movie {movie_name} doesn't exist!", 31))
-            continue
-        else:
-            col_prompt = (colored_text("Enter new rating (0-10): ", 33))
-            new_rating = float(input(col_prompt))
-            if 0 <= new_rating <= 10:
-                movies[movie_name]["Rating"] = new_rating
-            else:
-                print(colored_text(f"Rating {new_rating} is invalid", 31))
-                continue
-        return movies
-
-
-def show_stats(movies):
-    """Prints movie statistics"""
-
-    if not movies:
-        print(colored_text("No movies available to show stats.", 31))
+def command_add_movie():
+    """Add a new movie using the SQL storage."""
+    title = input(colored_text("Enter new movie name: ", 33)).strip()
+    if not title:
+        print(colored_text("Title cannot be empty.", 31))
         return
 
-    ratings = [info["Rating"] for info in movies.values()]
+    year_input = input(colored_text("Enter movie year: ", 33)).strip()
+    rating_input = input(colored_text("Enter movie rating (0-10): ", 33)).strip()
 
-    average_rating = sum(ratings) / len(ratings)
-    median_rating = median(ratings)
-    best_rating = max(ratings)
-    worst_rating = min(ratings)
+    try:
+        year = int(year_input)
+        rating = float(rating_input)
+        if not (0 <= rating <= 10):
+            print(colored_text("Rating must be between 0 and 10.", 31))
+            return
+    except ValueError:
+        print(colored_text("Invalid input. Year must be int, rating must be float.", 31))
+        return
 
-    best_movies = [(movie, info["Rating"]) for movie, info in movies.items() if info["Rating"] == best_rating]
-    worst_movies = [(movie, info["Rating"]) for movie, info in movies.items() if info["Rating"] == worst_rating]
+    success = storage.add_movie(title, year, rating)
+    if success:
+        print(colored_text(f"Movie '{title}' added successfully.", 32))
+    else:
+        print(colored_text(f"Failed to add movie '{title}'.", 31))
 
-    print(colored_text(f"Average rating: {average_rating:.2f}", 36))
-    print(colored_text(f"Median rating: {median_rating:.2f}", 36))
+def command_delete_movie():
+    """Delete a movie using the SQL storage."""
+    title = input(colored_text("Enter movie name to delete: ", 33)).strip()
+    if not title:
+        print(colored_text("Title cannot be empty.", 31))
+        return
+    storage.delete_movie(title)
 
-    print(colored_text("Best movie(s): ", 36), end="")
-    for movie, rating in best_movies:
-        print(colored_text(f"{movie} ({rating}) ", 36), end="")
-    print()
+def command_update_movie():
+    """Update a movie's rating using the SQL storage."""
+    title = input(colored_text("Enter movie name: ", 33)).strip()
+    if not title:
+        print(colored_text("Title cannot be empty.", 31))
+        return
 
-    print(colored_text("Worst movie(s): ", 36), end="")
-    for movie, rating in worst_movies:
-        print(colored_text(f"{movie} ({rating}) ", 36), end="")
-    print()
+    try:
+        new_rating = float(input(colored_text("Enter new rating (0-10): ", 33)))
+        if 0 <= new_rating <= 10:
+            storage.update_movie(title, new_rating)
+        else:
+            print(colored_text("Rating must be between 0 and 10.", 31))
+    except ValueError:
+        print(colored_text("Invalid rating input.", 31))
 
+def show_stats():
+    """Show basic statistics for movies."""
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text("""
+                SELECT COUNT(*) as count,
+                       AVG(rating) as avg_rating,
+                       MIN(rating) as min_rating,
+                       MAX(rating) as max_rating
+                FROM movies
+            """))
+            stats = result.mappings().first()
+            if stats["count"] == 0:
+                print(colored_text("No movies in database.", 33))
+                return
 
+            print(colored_text("\n--- Movie Statistics ---", 36))
+            print(f"Total movies: {stats['count']}")
+            print(f"Average rating: {stats['avg_rating']:.2f}")
+            print(f"Lowest rating: {stats['min_rating']:.1f}")
+            print(f"Highest rating: {stats['max_rating']:.1f}")
+    except Exception as e:
+        print(colored_text(f"Error fetching statistics: {e}", 31))
 
-def random_movie(movies):
-    """Prints random movie from dict"""
-    movie, rating = random.choice(list(movies.items()))
-    print(colored_text(f"Your movie tonight: {movie}, it's rated {rating}", 36))
+def random_movie():
+    """Select a random movie from the database."""
+    try:
+        movies = list_movies()
+        if not movies:
+            print(colored_text("No movies found.", 33))
+            return
 
+        title = random.choice(list(movies.keys()))
+        data = movies[title]
+        print(colored_text(f"🎥 Random movie: {title} ({data['year']}) - {data['rating']}/10", 36))
+    except Exception as e:
+        print(colored_text(f"Error selecting random movie: {e}", 31))
 
 def calculate_distance(string1, string2, memo=None):
     """calculate levenshtein distance"""
@@ -194,148 +193,109 @@ def count_matches(string1, string2):
     return matches >= min_matches
 
 
-def search_movie(movies):
-    """Search for movie in dict"""
-    user_query = input(colored_text("Enter part of movie name: ", 33)).lower()
-    similar_matches = []
-
-    results = [(movie, rating) for movie, rating in movies.items() if user_query in movie.lower()]
-
-    if results:
-        for movie, rating in results:
-            print(colored_text(f"{movie}, {rating}", 36))
+def search_movie():
+    """Search for a movie by partial title."""
+    query = input(colored_text("Enter part of the movie title: ", 33)).strip()
+    if not query:
+        print(colored_text("Search query cannot be empty.", 31))
         return
 
-    for movie, rating in movies.items():
-        movie_lower = movie.lower()
-        if count_matches(user_query, movie_lower):
-            distance = calculate_distance(
-            user_query, movie_lower) / max(len(user_query),
-            len(movie_lower))
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(
+                text("SELECT title, year, rating FROM movies WHERE title LIKE :query"),
+                {"query": f"%{query}%"}
+            )
+            rows = result.mappings().all()
 
-            if distance <= 0.7:
-                similar_matches.append((movie, rating, distance))
+        if not rows:
+            print(colored_text("No matching movies found.", 33))
+            return
 
-    if similar_matches:
-        similar_matches.sort(key=lambda x: x[2])
+        print(colored_text(f"\nMovies matching '{query}':", 36))
+        for row in rows:
+            print(f"{row['title']} ({row['year']}) - {row['rating']}/10")
+    except Exception as e:
+        print(colored_text(f"Error during search: {e}", 31))
 
-        print(colored_text(f"Didn't find '{user_query}', but found similar matches:", 36))
-        for movie, rating, distance in similar_matches:
-            print(colored_text
-            (f"{movie}, Rating: {rating} (Similarity Score: {round(1 - distance, 2)})", 36))
-    else:
-        print(colored_text
-        (f"No matches found for '{user_query}'.", 31))
+def print_sorted_movies():
+    """Print all movies sorted by rating (descending)."""
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(
+                text("SELECT title, year, rating FROM movies ORDER BY rating DESC")
+            )
+            rows = result.mappings().all()
 
+        if not rows:
+            print(colored_text("No movies found.", 33))
+            return
 
-def print_sorted_movies(movies):
-    """Prints sorted movie list by rating or year."""
-    if not movies:
-        print(colored_text("No movies available to sort.", 31))
-        return
-    while True:
-        print(colored_text("Sort movies by:", 33))
-        print("1. Rating (highest first)")
-        print("2. Year (chronological)")
+        print(colored_text("\n--- Movies sorted by rating ---", 36))
+        for row in rows:
+            print(f"{row['title']} ({row['year']}) - {row['rating']}/10")
+    except Exception as e:
+        print(colored_text(f"Error sorting movies: {e}", 31))
 
-        choice = input(colored_text("Enter choice (1 or 2): ", 33)).strip()
+def create_rating_histogram():
+    """Create and show a histogram of movie ratings."""
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text("SELECT rating FROM movies"))
+            ratings = [row[0] for row in result.fetchall()]
 
-        if choice == "1":
-            # Sort by rating descending
-            sorted_movies = sorted(movies.items(), key=lambda item: item[1]["Rating"], reverse=True)
-            print(colored_text("\nMovies sorted by rating (highest first):", 34))
-            break
-        elif choice == "2":
-            order = input(colored_text("Show latest movies first? (y/n): ", 33)).strip().lower()
-            reverse_order = order == "y"
-            # Sort by year
-            sorted_movies = sorted(movies.items(), key=lambda item: item[1]["Year"], reverse=reverse_order)
-            direction = "newest first" if reverse_order else "oldest first"
-            print(colored_text(f"\nMovies sorted by year ({direction}):", 34))
-            break
-        else:
-            print(colored_text("Invalid choice. Try again.", 31))
-            continue
+        if not ratings:
+            print(colored_text("No ratings available.", 33))
+            return
 
-    for movie, info in sorted_movies:
-        print(colored_text(f"{movie} ({info['Year']}), Rating: {info['Rating']}", 36))
+        plt.hist(ratings, bins=10, edgecolor='black')
+        plt.title("Movie Ratings Histogram")
+        plt.xlabel("Rating")
+        plt.ylabel("Frequency")
+        plt.show()
+    except Exception as e:
+        print(colored_text(f"Error generating histogram: {e}", 31))
 
+def filter_movies():
+    """Filter movies by minimum rating or year."""
+    try:
+        min_rating = input(colored_text("Enter minimum rating (leave blank for none): ", 33)).strip()
+        min_year = input(colored_text("Enter minimum year (leave blank for none): ", 33)).strip()
 
-def create_rating_histogram(movies):
-    """Create a rating histogram."""
-    if not movies:
-        print(colored_text("No movies available to create histogram.", 31))
-        return
+        conditions = []
+        params = {}
+        if min_rating:
+            conditions.append("rating >= :min_rating")
+            params["min_rating"] = float(min_rating)
+        if min_year:
+            conditions.append("year >= :min_year")
+            params["min_year"] = int(min_year)
 
-    ratings = [info["Rating"] for info in movies.values()]
-    plt.hist(ratings, bins="auto", color='skyblue', edgecolor='black')
-    plt.xlabel("Ratings")
-    plt.ylabel("Frequency")
-    plt.title('Rating Histogram')
+        where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
 
-    name = input(colored_text("Enter save file name: ", 33)).strip()
-    if not name:
-        print(colored_text("Filename cannot be empty.", 31))
-        return
+        with engine.connect() as conn:
+            result = conn.execute(
+                text(f"SELECT title, year, rating FROM movies {where_clause} ORDER BY rating DESC"),
+                params
+            )
+            rows = result.mappings().all()
 
-    plt.savefig(f"{name}.png")
-    print(colored_text(f"Histogram saved as {name}.png", 32))
-    plt.clf()
+        if not rows:
+            print(colored_text("No movies match the filter.", 33))
+            return
 
-def filter_movies(movies):
-    """Filter movies by rating and/or year."""
-    if not movies:
-        print(colored_text("No movies available to filter.", 31))
-        return
-
-    while True:
-        try:
-            print(colored_text("Filter movies by:", 33))
-
-            min_rating_input = input(colored_text(
-                "Enter minimum rating (leave blank for no minimum)(0-10): ", 33)).strip()
-            min_rating = float(min_rating_input) if min_rating_input else 0
-
-            min_year_input = input(colored_text(
-                "Enter start year (leave blank for no limit): ", 33)).strip()
-            min_year = int(min_year_input) if min_year_input else 0
-
-            max_year_input = input(colored_text(
-                "Enter end year (leave blank for no limit): ", 33)).strip()
-            max_year = int(max_year_input) if max_year_input else float('inf')
-
-            break
-
-        except ValueError:
-            print(colored_text("Invalid input. Try again.", 31))
-
-    # Apply filters
-    filtered_movies = {}
-    for movie, info in movies.items():
-        year = info.get("Year")
-        rating = info.get("Rating")
-        if year is None or rating is None:
-            continue  # Skip incomplete entries
-        if min_year <= year <= max_year and rating >= min_rating:
-            filtered_movies[movie] = info
-
-    # Print results
-    if not filtered_movies:
-        print(colored_text("No movies matched your filter.", 31))
-    else:
-        print(colored_text("Filtered movies:", 34))
-        for movie, info in filtered_movies.items():
-            print(colored_text(f"{movie} ({info['Year']}): {info['Rating']}", 36))
-
-
-
+        print(colored_text("\n--- Filtered Movies ---", 36))
+        for row in rows:
+            print(f"{row['title']} ({row['year']}) - {row['rating']}/10")
+    except Exception as e:
+        print(colored_text(f"Error filtering movies: {e}", 31))
 
 MENU_ACTIONS = {
     "0": close_programm,
-    "1": list_movies,
-    "2": add_movie,
-    "3": del_movie,
-    "4": update_movie,
+    "1": command_list_movies,
+    "2": command_add_movie_omdb,
+    "3": command_delete_movie,
+    "4": command_update_movie,
     "5": show_stats,
     "6": random_movie,
     "7": search_movie,
@@ -355,24 +315,18 @@ def main():
         print_menu(MAIN_MENU)
         print()
 
-        movies = movie_storage.get_movies()
+        answer = return_user_choice()
+        action = MENU_ACTIONS.get(answer)
 
-        try:
-            answer = return_user_choice()
-            action = MENU_ACTIONS.get(answer)
-            if answer == "0":
-                action()
-            elif action:
-                if answer in ("2", "3", "4"):
-                    movies = action(movies)
-                    movie_storage.save_movies(movies)  # Änderungen persistent machen
-                else:
-                    action(movies)
-
-            print()
-            wait_for_input()
-        except TypeError:
+        if answer == "0":
+            action()
+        elif action:
+            action()
+        else:
             print(colored_text("That's not a valid choice. Please try again.", 31))
+
+        print()
+        wait_for_input()
 
 
 if __name__ == "__main__":
