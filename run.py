@@ -1,10 +1,10 @@
 import random
 import sys
-import movie_storage_sql as storage
+from storage import movie_storage_sql as storage
 from collections import Counter
 from termcolor import colored as colored_text
 from matplotlib import pyplot as plt
-from movie_storage_sql import list_movies
+from storage.movie_storage_sql import engine, list_movies
 from sqlalchemy import text
 
 MAIN_MENU = ("Exit",
@@ -17,7 +17,8 @@ MAIN_MENU = ("Exit",
             "Search movie",
             "Movies sorted by rating",
             "Create Rating Histogram",
-             "Filter Movies")
+             "Filter Movies",
+             "Generate Website")
 
 def print_menu(menu):
     """Prints the menu"""
@@ -33,7 +34,7 @@ def wait_for_input():
 
 def return_user_choice():
     """Ask for and return user input"""
-    choice = input(colored_text("Enter choice (0–10): ", "yellow"))
+    choice = input(colored_text("Enter choice (0–11): ", "yellow"))
     print()
     return choice
 
@@ -54,7 +55,7 @@ def command_add_movie_omdb():
         return
 
     try:
-        from movie_storage_sql import add_movie_from_omdb
+        from storage.movie_storage_sql import add_movie_from_omdb
         success = add_movie_from_omdb(title)
         if success:
             print(colored_text(f"Movie '{title}' added successfully from OMDb.", 32))
@@ -68,34 +69,10 @@ def command_list_movies():
     """Retrieve and display all movies from the database."""
     movies = storage.list_movies()
     print(f"{len(movies)} movies in total")
-    for movie, data in movies.items():
-        print(f"{movie} ({data['year']}): {data['rating']}")
+    for title, data in movies.items():
+        print(colored_text(f"🎬 {title} ({data['year']}) - {data['rating']}/10", 36))
+        print(colored_text(f"Poster: {data['poster_url']}", 34))
 
-def command_add_movie():
-    """Add a new movie using the SQL storage."""
-    title = input(colored_text("Enter new movie name: ", 33)).strip()
-    if not title:
-        print(colored_text("Title cannot be empty.", 31))
-        return
-
-    year_input = input(colored_text("Enter movie year: ", 33)).strip()
-    rating_input = input(colored_text("Enter movie rating (0-10): ", 33)).strip()
-
-    try:
-        year = int(year_input)
-        rating = float(rating_input)
-        if not (0 <= rating <= 10):
-            print(colored_text("Rating must be between 0 and 10.", 31))
-            return
-    except ValueError:
-        print(colored_text("Invalid input. Year must be int, rating must be float.", 31))
-        return
-
-    success = storage.add_movie(title, year, rating)
-    if success:
-        print(colored_text(f"Movie '{title}' added successfully.", 32))
-    else:
-        print(colored_text(f"Failed to add movie '{title}'.", 31))
 
 def command_delete_movie():
     """Delete a movie using the SQL storage."""
@@ -290,6 +267,41 @@ def filter_movies():
     except Exception as e:
         print(colored_text(f"Error filtering movies: {e}", 31))
 
+def generate_website():
+    """Generate an HTML website with all movies."""
+
+    movies = list_movies()
+    if not movies:
+        print("No movies available to generate website.")
+        return
+
+    # Template-Datei laden
+    with open("_static/index_template.html", "r", encoding="utf-8") as f:
+        template = f.read()
+
+    # Movie-Grid generieren
+    movie_html_blocks = []
+    for title, data in movies.items():
+        movie_html_blocks.append(f"""
+        <div class="movie">
+            <img src="{data.get('poster_url', '')}" alt="{title} poster">
+            <h2>{title}</h2>
+            <p>{data.get('year', 'N/A')}</p>
+            <p>⭐ {data.get('rating', 'N/A')}/10</p>
+        </div>
+        """)
+
+    movie_grid = "\n".join(movie_html_blocks)
+
+    # Platzhalter ersetzen
+    website_html = template.replace("__TEMPLATE_TITLE__", "My Movie Collection")
+    website_html = website_html.replace("__TEMPLATE_MOVIE_GRID__", movie_grid)
+
+    # index.html schreiben
+    with open("index.html", "w", encoding="utf-8") as f:
+        f.write(website_html)
+
+    print("✅ Website was generated successfully.")
 MENU_ACTIONS = {
     "0": close_programm,
     "1": command_list_movies,
@@ -301,7 +313,8 @@ MENU_ACTIONS = {
     "7": search_movie,
     "8": print_sorted_movies,
     "9": create_rating_histogram,
-    "10": filter_movies
+    "10": filter_movies,
+    "11": generate_website
 }
 
 
@@ -330,4 +343,5 @@ def main():
 
 
 if __name__ == "__main__":
+    storage.create_table()
     main()
